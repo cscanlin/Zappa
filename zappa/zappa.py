@@ -333,7 +333,7 @@ class Zappa(object):
             else:  # pragma: no cover
                 print("Zappa requires an active virtual or conda environment.")
                 quit()
-            
+
             if conda_mode:
                 if (('linux' not in sys.platform)
                         or (machine() in ['armv6l', 'armv7l', 'ppc64le'])
@@ -343,7 +343,6 @@ class Zappa(object):
                     warnings.warn('The local python version is different than that of AWS lambda (2.7.x).\nMake sure the binaries in your conda environment are compatible with AWS lambda')
                 if use_precompiled_packages:
                     warnings.warn('Using conda while use_precompiled_packages is set to true is not recommended: it may lead to overwriting conda packages')
-
 
         cwd = os.getcwd()
         zip_fname = prefix + '-' + str(int(time.time())) + '.zip'
@@ -377,7 +376,8 @@ class Zappa(object):
             )
 
         # First, do the project..
-        temp_project_path = os.path.join(tempfile.gettempdir(), str(int(time.time())))
+        temp_zappa_folder = os.path.join(tempfile.gettempdir(), str(int(time.time())))
+        temp_project_path = os.path.join(temp_zappa_folder, 'project')
 
         if minify:
             excludes = ZIP_EXCLUDES + exclude + [split_venv[-1]]
@@ -386,11 +386,18 @@ class Zappa(object):
             copytree(cwd, temp_project_path, symlinks=False)
 
         # Then, do the site-packages..
+<<<<<<< HEAD
         temp_package_path = os.path.join(tempfile.gettempdir(), str(int(time.time() + 1)))
         if os.sys.platform == 'win32':
             site_packages = os.path.join(venv, 'Lib', 'site-packages')
         else:
             site_packages = os.path.join(venv, 'lib', 'python2.7', 'site-packages')
+=======
+        # TODO Windows: %VIRTUAL_ENV%\Lib\site-packages
+        temp_package_path = os.path.join(temp_zappa_folder, 'package')
+        site_packages = os.path.join(venv, 'lib', 'python2.7', 'site-packages')
+
+>>>>>>> c338de7... Change temp folders for easier debugging
         if minify:
             excludes = ZIP_EXCLUDES + exclude
             copytree(site_packages, temp_package_path, symlinks=False, ignore=shutil.ignore_patterns(*excludes))
@@ -469,8 +476,7 @@ class Zappa(object):
         zipf.close()
 
         # Trash the temp directory
-        shutil.rmtree(temp_project_path)
-        shutil.rmtree(temp_package_path)
+        shutil.rmtree(temp_zappa_folder)
 
         # Warn if this is too large for Lambda.
         file_stats = os.stat(zip_path)
