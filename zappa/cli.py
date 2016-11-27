@@ -1260,7 +1260,7 @@ class ZappaCLI(object):
                 self.lambda_name,
                 handler_file=handler_file,
                 use_precompiled_packages=self.stage_config.get('use_precompiled_packages', True),
-                exclude=self.stage_config.get('exclude', [])
+                exclude=self.stage_config.get('exclude', []),
                 exclude_conda_packages = self.stage_config.get('exclude_conda_packages',
                     ['pip','python','readline','sqlite','wheel', 'boto3', 'botocore'])
             )
