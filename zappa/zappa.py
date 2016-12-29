@@ -13,6 +13,7 @@ import requests
 import shutil
 import string
 import subprocess
+import sys
 import tarfile
 import tempfile
 import time
@@ -26,6 +27,7 @@ from botocore.exceptions import ClientError
 from io import BytesIO
 from lambda_packages import lambda_packages
 from tqdm import tqdm
+from platform import machine
 
 # Zappa imports
 from util import copytree, add_event_source, remove_event_source
@@ -318,7 +320,8 @@ class Zappa(object):
                 os.remove(link)
 
     def create_lambda_zip(self, prefix='lambda_package', handler_file=None,
-                          minify=True, exclude=None, use_precompiled_packages=True, include=None, venv=None):
+                          minify=True, exclude=None, use_precompiled_packages=True, include=None, venv=None,
+                          exclude_conda_packages=[]):
         """
         Create a Lambda-ready zip file of the current virtualenvironment and working directory.
 
@@ -328,8 +331,13 @@ class Zappa(object):
         import pip
 
         if not venv:
+            conda_mode = False
             if 'VIRTUAL_ENV' in os.environ:
                 venv = os.environ['VIRTUAL_ENV']
+            elif 'CONDA_ENV_PATH' in os.environ:
+                venv = os.environ['CONDA_ENV_PATH']
+                conda_env = venv
+                conda_mode = True
             elif os.path.exists('.python-version'):  # pragma: no cover
                 logger.debug("Pyenv's local virtualenv detected.")
                 try:
@@ -344,7 +352,7 @@ class Zappa(object):
                 venv = bin_path[:bin_path.rfind(env_name)] + env_name
                 logger.debug('env path = {}'.format(venv))
             else:  # pragma: no cover
-                print("Zappa requires an active virtual environment.")
+                print("Zappa requires an active virtual or conda environment.")
                 quit()
 
         cwd = os.getcwd()
@@ -379,7 +387,8 @@ class Zappa(object):
             )
 
         # First, do the project..
-        temp_project_path = os.path.join(tempfile.gettempdir(), str(int(time.time())))
+        temp_zappa_folder = os.path.join(tempfile.gettempdir(), str(int(time.time())))
+        temp_project_path = os.path.join(temp_zappa_folder, 'project')
 
         if minify:
             excludes = ZIP_EXCLUDES + exclude + [split_venv[-1]]
@@ -407,16 +416,37 @@ class Zappa(object):
         site_packages_64 = os.path.join(venv, 'lib64', 'python2.7', 'site-packages')
         if os.path.exists(site_packages_64):
             egg_links.extend(glob.glob(os.path.join(site_packages_64, '*.egg-link')))
-            if minify:
-                excludes = ZIP_EXCLUDES + exclude
-                copytree(site_packages_64, temp_package_path, symlinks=False, ignore=shutil.ignore_patterns(*excludes))
-            else:
-                copytree(site_packages_64, temp_package_path, symlinks=False)
 
         if egg_links:
             self.copy_editable_packages(egg_links, temp_package_path)
+            copy_tree(temp_package_path, temp_project_path, update=True)
+        else:
+            temp_package_path = os.path.join(temp_zappa_folder, 'conda_env')
+            site_packages = os.path.join(temp_package_path, 'lib', 'python2.7', 'site-packages')
+            if minify:
+                excludes = ZIP_EXCLUDES + exclude
+                copytree(conda_env, temp_package_path, symlinks=True, ignore=shutil.ignore_patterns(*excludes))
+                # Use conda cli to remove standard packages like python, pip, ...
+                if len(exclude_conda_packages):
+                    print('Removing ' + ', '.join(exclude_conda_packages) + ' from conda environment ' + temp_package_path)
+                    subprocess.call(['conda', 'remove', '-p', temp_package_path, '--force', '--yes'] + exclude_conda_packages,
+                        stdout=open(os.devnull, 'wb'), stderr=open(os.devnull, 'wb'))
+            else:
+                copytree(conda_env, temp_package_path, symlinks=True)
 
-        copy_tree(temp_package_path, temp_project_path, update=True)
+            # Extracts all egg files (e.g. setuptools)
+            egg_files = [f for f in os.listdir(site_packages) if os.path.isfile(os.path.join(site_packages, f)) and f.split('.')[-1] == 'egg']
+            for egg_file in egg_files:
+                print('Extracting ' + egg_file)
+                with zipfile.ZipFile(os.path.join(site_packages, egg_file)) as zf:
+                    zf.extractall(os.path.join(site_packages))
+                os.remove(os.path.join(site_packages, egg_file))
+            # Put site-packages at the root of the environment
+            print('Copying python packages')
+            copy_tree(site_packages, temp_project_path, update=True)
+            shutil.rmtree(site_packages)
+            print('Copying remaining binaries')
+            copy_tree(temp_package_path, temp_project_path, update=True)
 
         # Then the pre-compiled packages..
         if use_precompiled_packages:
@@ -509,8 +539,7 @@ class Zappa(object):
         zipf.close()
 
         # Trash the temp directory
-        shutil.rmtree(temp_project_path)
-        shutil.rmtree(temp_package_path)
+        shutil.rmtree(temp_zappa_folder)
 
         # Warn if this is too large for Lambda.
         file_stats = os.stat(zip_path)
